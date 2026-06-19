@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ResearchMind — Read papers faster, with proof</title>
+<link rel="stylesheet" href="css/main.css">
+<style>
+  .hero {
+    padding: 88px 0 64px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+    align-items: center;
+  }
+  .hero-eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: 46px;
+    line-height: 1.08;
+    margin-bottom: 18px;
+  }
+  .hero h1 em {
+    font-style: italic;
+    color: var(--pine-bright);
+  }
+  .hero p {
+    color: var(--text-dim);
+    font-size: 16px;
+    line-height: 1.65;
+    max-width: 440px;
+    margin-bottom: 28px;
+  }
+  .hero-actions { display: flex; gap: 12px; }
+
+  .manuscript-wrap {
+    position: relative;
+    padding: 0 0 64px 0;
+  }
+  .manuscript {
+    position: relative;
+    background: var(--paper);
+    border-radius: 3px;
+    padding: 38px 36px;
+    box-shadow: 7px 9px 0 rgba(0,0,0,0.32);
+    transform: rotate(0.6deg);
+  }
+  .manuscript .kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(13,17,23,0.38);
+    margin-bottom: 18px;
+  }
+  .manuscript-line {
+    height: 8px;
+    background: rgba(13,17,23,0.1);
+    border-radius: 1px;
+    margin-bottom: 13px;
+  }
+  .manuscript-line:nth-child(2) { width: 92%; }
+  .manuscript-line:nth-child(3) { width: 78%; }
+  .manuscript-line:nth-child(5) { width: 65%; margin-bottom: 22px; }
+  .cited-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 13px;
+  }
+  .cited-line .seg {
+    height: 8px;
+    background: rgba(13,17,23,0.1);
+    border-radius: 1px;
+  }
+  .cited-line .seg.before { width: 28%; }
+  .cited-line .seg.after { width: 18%; }
+  .cited-line .marker {
+    height: 8px;
+    flex: 1;
+    max-width: 38%;
+    background: rgba(31,111,92,0.18);
+    border-bottom: 1.5px solid var(--pine);
+    border-radius: 1px;
+    position: relative;
+  }
+  .cited-line .marker::after {
+    content: '1';
+    position: absolute;
+    right: -14px;
+    top: -9px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    color: var(--pine);
+    font-weight: 500;
+  }
+  .pin-note {
+    position: absolute;
+    right: 18px;
+    bottom: 0;
+    width: 248px;
+    background: var(--ink-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    padding: 15px 17px;
+    box-shadow: 4px 5px 0 rgba(0,0,0,0.4);
+    opacity: 0;
+    animation: pinIn 0.55s var(--ease) 0.85s forwards;
+  }
+  @keyframes pinIn {
+    from { opacity: 0; transform: translate(10px, 8px) rotate(-2deg); }
+    to { opacity: 1; transform: translate(0,0) rotate(-1.5deg); }
+  }
+  .pin-note .src {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--clay);
+    margin-bottom: 8px;
+  }
+  .pin-note .src .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--pine-bright);
+    flex-shrink: 0;
+  }
+  .pin-note .txt {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12.5px;
+    color: var(--text-warm);
+    line-height: 1.55;
+  }
+  @keyframes pinIn {
+    from { opacity: 0; transform: translate(8px, 4px) rotate(-2deg); }
+    to { opacity: 1; transform: translate(0,0) rotate(-1.5deg); }
+  }
+  .pin-note .src {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--clay);
+    margin-bottom: 6px;
+  }
+  .pin-note .txt {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 12.5px;
+    color: var(--text-warm);
+    line-height: 1.5;
+  }
+
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 28px 0;
+  }
+  .stat { padding: 0 24px; border-left: 1px solid var(--border); }
+  .stat:first-child { border-left: none; padding-left: 0; }
+  .stat .num {
+    font-family: 'Fraunces', serif;
+    font-size: 26px;
+    color: var(--paper);
+    display: block;
+    margin-bottom: 4px;
+  }
+  .stat .lbl {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .features {
+    padding: 64px 0;
+  }
+  .features-head { margin-bottom: 36px; max-width: 480px; }
+  .features-head .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin-bottom: 14px;
+  }
+  .features-head h2 { font-size: 28px; margin-bottom: 10px; }
+  .features-head p { color: var(--text-dim); font-size: 15px; }
+
+  .feature-rows { border-top: 1px solid var(--border); }
+  .feature-row {
+    display: grid;
+    grid-template-columns: 64px 1fr 1fr;
+    gap: 32px;
+    padding: 26px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: baseline;
+  }
+  .feature-row .idx {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .feature-row h3 {
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--paper);
+  }
+  .feature-row p {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  .upload-section { padding: 64px 0 88px; }
+  .upload-head { margin-bottom: 28px; }
+  .upload-head h2 { font-size: 24px; margin-bottom: 8px; }
+  .upload-head p { color: var(--text-dim); font-size: 14px; }
+
+  .upload-grid {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 32px;
+    align-items: start;
+  }
+
+  .papers-panel { border-left: 1px solid var(--border); padding-left: 28px; }
+  .papers-panel h3 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+  }
+
+  .action-row { display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
+
+  #file-input { display: none; }
+
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; padding-top: 56px; }
+    .pin-note { display: none; }
+    .stats-strip { grid-template-columns: repeat(2,1fr); row-gap: 20px; }
+    .stat:nth-child(3) { border-left: none; padding-left: 0; }
+    .feature-row { grid-template-columns: 1fr; gap: 8px; }
+    .upload-grid { grid-template-columns: 1fr; }
+    .papers-panel { border-left: none; padding-left: 0; border-top: 1px solid var(--border); padding-top: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">
+    <span class="navbar-mark"></span>
+    <span class="navbar-title">ResearchMind</span>
+  </a>
+  <ul class="navbar-nav">
+    <li><a href="index.html" class="active">Library</a></li>
+    <li><a href="chat.html">Ask</a></li>
+    <li><a href="analyze.html">Analyze</a></li>
+    <li><a href="compare.html">Compare</a></li>
+  </ul>
+</nav>
+
+<div class="main-content">
+  <div class="container">
+
+    <section class="hero">
+      <div>
+        <div class="hero-eyebrow">Research reading, with receipts</div>
+        <h1>Every answer<br>traces back to <em>the page</em><br>it came from.</h1>
+        <p>Upload a paper and ask it anything. ResearchMind reads the full text, answers in plain language, and points to the exact page the answer came from — every time.</p>
+        <div class="hero-actions">
+          <button class="btn btn-primary" onclick="document.getElementById('file-input').click()">Upload a paper</button>
+          <a href="chat.html" class="btn btn-secondary">Ask a question →</a>
+        </div>
+      </div>
+
+<div class="manuscript-wrap">
+        <div class="manuscript">
+          <div class="kicker">5. Results and discussion</div>
+          <div class="manuscript-line"></div>
+          <div class="manuscript-line"></div>
+          <div class="manuscript-line"></div>
+          <div class="cited-line">
+            <span class="seg before"></span>
+            <span class="marker"></span>
+            <span class="seg after"></span>
+          </div>
+          <div class="manuscript-line"></div>
+        </div>
+        <div class="pin-note">
+          <div class="src"><span class="dot"></span>p. 14 — fig. 3</div>
+          <div class="txt">"...reduces relative error by an order of magnitude against the baseline..."</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-strip">
+      <div class="stat"><span class="num" id="stat-papers">0</span><span class="lbl">Papers in your library</span></div>
+      <div class="stat"><span class="num">100%</span><span class="lbl">Answers with page citations</span></div>
+      <div class="stat"><span class="num">&lt;10s</span><span class="lbl">Typical answer time</span></div>
+      <div class="stat"><span class="num">PDF</span><span class="lbl">Upload format</span></div>
+    </section>
+
+    <section class="features">
+      <div class="features-head">
+        <div class="eyebrow">What you can do</div>
+        <h2>One library, five ways to read it</h2>
+        <p>Built for the parts of research that take the longest — finding the methodology, spotting the gap, and remembering which paper said what.</p>
+      </div>
+      <div class="feature-rows">
+        <div class="feature-row">
+          <span class="idx">01</span>
+          <h3>Ask, across any paper</h3>
+          <p>Pose a question and get an answer pulled directly from your papers, with the page number attached.</p>
+        </div>
+        <div class="feature-row">
+          <span class="idx">02</span>
+          <h3>Summarize on demand</h3>
+          <p>Objective, method, findings, and limitations — structured the way a lab meeting expects them.</p>
+        </div>
+        <div class="feature-row">
+          <span class="idx">03</span>
+          <h3>Pull out the method</h3>
+          <p>Isolate methodology, key findings, or stated future work without rereading the whole paper.</p>
+        </div>
+        <div class="feature-row">
+          <span class="idx">04</span>
+          <h3>Set papers side by side</h3>
+          <p>Compare approach, data, and results across two or more papers in one structured pass.</p>
+        </div>
+        <div class="feature-row">
+          <span class="idx">05</span>
+          <h3>Find what's missing</h3>
+          <p>Surface the gaps and open questions sitting between the papers you've already gathered.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="upload-section">
+      <div class="upload-head">
+        <h2>Your library</h2>
+        <p>Drop in a PDF, or several. Each one is ready to query in under a minute.</p>
+      </div>
+
+      <div class="upload-grid">
+        <div>
+          <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+            <div class="upload-mark"></div>
+            <h3>Drop PDFs here</h3>
+            <p>or click to browse — multiple files supported</p>
+          </div>
+          <input type="file" id="file-input" accept=".pdf" multiple>
+
+          <div class="upload-progress" id="upload-progress" style="display:none">
+            <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+            <p style="font-size:12px; color:var(--text-dim); margin-top:8px;" id="progress-text">Uploading...</p>
+          </div>
+
+          <div class="action-row" id="action-buttons" style="display:none">
+            <a href="chat.html" class="btn btn-primary">Ask a question</a>
+            <a href="analyze.html" class="btn btn-secondary">Analyze a paper</a>
+            <a href="compare.html" class="btn btn-secondary">Compare papers</a>
+          </div>
+        </div>
+
+        <div class="papers-panel">
+          <h3>In your library</h3>
+          <div id="papers-container">
+            <div class="empty-state" style="padding:24px 0;">
+              <p>Nothing uploaded yet</p>
+            </div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="clearAllPapers()" id="clear-btn" style="display:none; margin-top:8px; width:100%;">
+            Clear library
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/upload.js"></script>
+</body>
+</html>

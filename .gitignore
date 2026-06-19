@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.env
+data/uploaded_papers/
+data/faiss_index/
+logs/
+*.h5
+*.pkl
+.DS_Store
+backend/evaluation/eval_results.json

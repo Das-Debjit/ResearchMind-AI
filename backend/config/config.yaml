@@ -1,0 +1,31 @@
+# Model Settings
+embedding_model: "all-MiniLM-L6-v2"
+llm_model: "gemini-3.1-flash-lite"
+reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Chunking Settings
+chunk_size: 1000
+chunk_overlap: 200
+
+# Retrieval Settings
+dense_top_k: 10
+bm25_top_k: 10
+reranker_top_k: 5
+final_top_k: 3
+
+# FAISS Settings
+faiss_index_path: "./data/faiss_index"
+
+# Upload Settings
+upload_dir: "./data/uploaded_papers"
+allowed_extensions: [".pdf"]
+max_file_size_mb: 50
+
+# Logging
+log_file: "./logs/app.log"
+log_level: "INFO"
+
+# API Settings
+api_host: "0.0.0.0"
+api_port: 8000
+cors_origins: ["*"]
