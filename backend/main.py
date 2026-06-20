@@ -42,13 +42,17 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+# Anchor data paths to this file's location, not the process cwd —
+# this makes paths work identically whether run locally or in any container.
+BASE_DIR = Path(__file__).resolve().parent
+
 # Global state — vector store and BM25 retriever
-vector_store = FAISSVectorStore(index_path="./data/faiss_index")
+vector_store = FAISSVectorStore(index_path=str(BASE_DIR / "data" / "faiss_index"))
 bm25_retriever = BM25Retriever()
 uploaded_papers = []
 
 # Upload directory
-UPLOAD_DIR = Path("./data/uploaded_papers")
+UPLOAD_DIR = BASE_DIR / "data" / "uploaded_papers"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Try loading existing index on startup
