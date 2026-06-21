@@ -24,16 +24,12 @@ from backend.src.features.extractor import (
 from backend.src.features.comparator import compare_papers
 from backend.src.features.gap_analyzer import analyze_gaps
 
-# Initialize FastAPI app
 app = FastAPI(
     title="ResearchMind AI",
     description="Enterprise Research Paper Intelligence Platform",
     version="1.0.0"
 )
 
-# CORS — allows frontend to call backend
-# NOTE: tighten allow_origins to your actual Vercel URL once deployed,
-# e.g. ["https://your-app.vercel.app"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -42,28 +38,24 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# Anchor data paths to this file's location, not the process cwd —
-# this makes paths work identically whether run locally or in any container.
 BASE_DIR = Path(__file__).resolve().parent
 
-# Global state — vector store and BM25 retriever
 vector_store = FAISSVectorStore(index_path=str(BASE_DIR / "data" / "faiss_index"))
 bm25_retriever = BM25Retriever()
-uploaded_papers = []
 
-# Upload directory
 UPLOAD_DIR = BASE_DIR / "data" / "uploaded_papers"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Try loading existing index on startup
 vector_store.load()
+bm25_retriever.index(vector_store.get_all_chunks())
 
-# Rebuild uploaded_papers list and BM25 index from existing FAISS data
-all_chunks = vector_store.get_all_chunks()
-if all_chunks:
-    uploaded_papers = list(set(chunk["source"] for chunk in all_chunks))
-    bm25_retriever.index(all_chunks)
-    logger.info(f"Restored {len(uploaded_papers)} papers from existing index: {uploaded_papers}")
+
+def get_current_papers() -> List[str]:
+    """Always derive the paper list fresh from FAISS — never trust in-memory cache,
+    since multiple replicas in production don't share Python state."""
+    vector_store.load()
+    chunks = vector_store.get_all_chunks()
+    return list(set(chunk["source"] for chunk in chunks)) if chunks else []
 
 
 # ─── Request Models ───────────────────────────────────────
@@ -80,7 +72,7 @@ class SummarizeRequest(BaseModel):
 
 class ExtractRequest(BaseModel):
     paper_name: str
-    extract_type: str  # "methodology", "findings", "future_work"
+    extract_type: str
 
 
 class CompareRequest(BaseModel):
@@ -98,60 +90,47 @@ def root():
     return {
         "message": "ResearchMind AI is running!",
         "version": "1.0.0",
-        "papers_loaded": len(uploaded_papers)
+        "papers_loaded": len(get_current_papers())
     }
 
 
 @app.get("/api/papers")
 def get_papers():
+    papers = get_current_papers()
     return {
-        "papers": uploaded_papers,
-        "total": len(uploaded_papers)
+        "papers": papers,
+        "total": len(papers)
     }
 
 
 @app.post("/api/upload")
 async def upload_paper(file: UploadFile = File(...)):
-    # Validate file type
     if not file.filename.endswith(".pdf"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF files are supported"
-        )
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     try:
-        # Save uploaded file
         file_path = UPLOAD_DIR / file.filename
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
         logger.info(f"File saved: {file.filename}")
 
-        # Process PDF → chunks
         chunks = process_pdf(str(file_path))
 
         if not chunks:
-            raise HTTPException(
-                status_code=400,
-                detail="Could not extract text from PDF"
-            )
+            raise HTTPException(status_code=400, detail="Could not extract text from PDF")
 
-        # Embed chunks
         embedded_chunks = embed_chunks(chunks)
 
-        # Add to FAISS index
+        vector_store.load()  # pick up any data written by other replicas first
         vector_store.add_chunks(embedded_chunks)
 
-        # Update BM25 index
         all_chunks = vector_store.get_all_chunks()
         bm25_retriever.index(all_chunks)
 
-        # Save index
         vector_store.save()
 
-        # Track uploaded papers
-        if file.filename not in uploaded_papers:
-            uploaded_papers.append(file.filename)
+        current_papers = get_current_papers()
 
         logger.info(f"Successfully processed: {file.filename}")
 
@@ -159,7 +138,7 @@ async def upload_paper(file: UploadFile = File(...)):
             "message": f"Successfully uploaded and processed {file.filename}",
             "paper": file.filename,
             "chunks_created": len(chunks),
-            "total_papers": len(uploaded_papers)
+            "total_papers": len(current_papers)
         }
 
     except Exception as e:
@@ -169,12 +148,11 @@ async def upload_paper(file: UploadFile = File(...)):
 
 @app.post("/api/ask")
 def ask_question(request: QuestionRequest):
-    """Answer a question using RAG pipeline."""
-    if not uploaded_papers:
-        raise HTTPException(
-            status_code=400,
-            detail="Please upload at least one paper first"
-        )
+    papers = get_current_papers()
+    bm25_retriever.index(vector_store.get_all_chunks())
+
+    if not papers:
+        raise HTTPException(status_code=400, detail="Please upload at least one paper first")
 
     try:
         result = answer_question(
@@ -193,11 +171,9 @@ def ask_question(request: QuestionRequest):
 
 @app.post("/api/summarize")
 def summarize(request: SummarizeRequest):
-    if request.paper_name not in uploaded_papers:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Paper not found: {request.paper_name}"
-        )
+    papers = get_current_papers()
+    if request.paper_name not in papers:
+        raise HTTPException(status_code=404, detail=f"Paper not found: {request.paper_name}")
 
     try:
         result = summarize_paper(request.paper_name, vector_store)
@@ -210,11 +186,9 @@ def summarize(request: SummarizeRequest):
 
 @app.post("/api/extract")
 def extract(request: ExtractRequest):
-    if request.paper_name not in uploaded_papers:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Paper not found: {request.paper_name}"
-        )
+    papers = get_current_papers()
+    if request.paper_name not in papers:
+        raise HTTPException(status_code=404, detail=f"Paper not found: {request.paper_name}")
 
     try:
         if request.extract_type == "methodology":
@@ -237,12 +211,10 @@ def extract(request: ExtractRequest):
 
 @app.post("/api/compare")
 def compare(request: CompareRequest):
+    papers = get_current_papers()
     for paper in request.paper_names:
-        if paper not in uploaded_papers:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Paper not found: {paper}"
-            )
+        if paper not in papers:
+            raise HTTPException(status_code=404, detail=f"Paper not found: {paper}")
 
     try:
         result = compare_papers(request.paper_names, vector_store)
@@ -268,18 +240,12 @@ def gaps(request: GapRequest):
 def clear_papers():
     vector_store.clear()
     bm25_retriever.__init__()
-    uploaded_papers.clear()
 
-    # Clear uploaded files
     for f in UPLOAD_DIR.glob("*.pdf"):
         f.unlink()
 
     return {"message": "All papers cleared successfully"}
 
-
-# ─── Local/Production entrypoint ───────────────────────────
-# Allows `python -m backend.main` as a fallback to uvicorn CLI.
-# Render's actual start command (see Procfile) still uses uvicorn directly.
 
 if __name__ == "__main__":
     import uvicorn
