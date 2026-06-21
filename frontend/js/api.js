@@ -1,6 +1,6 @@
 // api.js - All backend API calls
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'https://debjit-007-researchmind-ai-backend.hf.space';
 
 // ── Toast Notifications ──────────────────────────────────
 
