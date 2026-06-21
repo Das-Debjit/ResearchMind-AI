@@ -1,12 +1,15 @@
 # main.py
 # FastAPI application — main entry point
+# Each user (identified by an anonymous X-User-Id header) gets their own
+# isolated FAISS index, BM25 index, and upload folder.
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from loguru import logger
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -35,25 +38,52 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 BASE_DIR = Path(__file__).resolve().parent
+USERS_DIR = BASE_DIR / "data" / "users"
+USERS_DIR.mkdir(parents=True, exist_ok=True)
 
-vector_store = FAISSVectorStore(index_path=str(BASE_DIR / "data" / "faiss_index"))
-bm25_retriever = BM25Retriever()
-
-UPLOAD_DIR = BASE_DIR / "data" / "uploaded_papers"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-vector_store.load()
-bm25_retriever.index(vector_store.get_all_chunks())
+# Per-user state, created lazily and cached in memory per process.
+# Each entry: { "vector_store": FAISSVectorStore, "bm25": BM25Retriever }
+_user_state = {}
 
 
-def get_current_papers() -> List[str]:
-    """Always derive the paper list fresh from FAISS — never trust in-memory cache,
-    since multiple replicas in production don't share Python state."""
-    vector_store.load()
+def safe_user_id(raw_user_id: Optional[str]) -> str:
+    """Sanitize the incoming user id so it's safe to use as a folder name."""
+    if not raw_user_id:
+        raise HTTPException(status_code=400, detail="Missing X-User-Id header")
+    cleaned = re.sub(r"[^a-zA-Z0-9_\-]", "", raw_user_id)[:80]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Invalid X-User-Id header")
+    return cleaned
+
+
+def get_user_context(user_id: str):
+    """Get (and lazily create) this user's isolated vector store, BM25 index,
+    and upload folder. Always reloads from disk so multiple replicas stay
+    consistent."""
+    user_dir = USERS_DIR / user_id
+    upload_dir = user_dir / "uploaded_papers"
+    index_dir = user_dir / "faiss_index"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    index_dir.mkdir(parents=True, exist_ok=True)
+
+    if user_id not in _user_state:
+        _user_state[user_id] = {
+            "vector_store": FAISSVectorStore(index_path=str(index_dir)),
+            "bm25": BM25Retriever(),
+        }
+
+    ctx = _user_state[user_id]
+    ctx["vector_store"].load()
+    ctx["bm25"].index(ctx["vector_store"].get_all_chunks())
+    ctx["upload_dir"] = upload_dir
+    return ctx
+
+
+def get_current_papers(vector_store: FAISSVectorStore) -> List[str]:
     chunks = vector_store.get_all_chunks()
     return list(set(chunk["source"] for chunk in chunks)) if chunks else []
 
@@ -90,49 +120,51 @@ def root():
     return {
         "message": "ResearchMind AI is running!",
         "version": "1.0.0",
-        "papers_loaded": len(get_current_papers())
     }
 
 
 @app.get("/api/papers")
-def get_papers():
-    papers = get_current_papers()
-    return {
-        "papers": papers,
-        "total": len(papers)
-    }
+def get_papers(x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+    papers = get_current_papers(ctx["vector_store"])
+    return {"papers": papers, "total": len(papers)}
 
 
 @app.post("/api/upload")
-async def upload_paper(file: UploadFile = File(...)):
+async def upload_paper(
+    file: UploadFile = File(...),
+    x_user_id: Optional[str] = Header(None)
+):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     try:
-        file_path = UPLOAD_DIR / file.filename
+        file_path = ctx["upload_dir"] / file.filename
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        logger.info(f"File saved: {file.filename}")
+        logger.info(f"[{user_id}] File saved: {file.filename}")
 
         chunks = process_pdf(str(file_path))
-
         if not chunks:
             raise HTTPException(status_code=400, detail="Could not extract text from PDF")
 
         embedded_chunks = embed_chunks(chunks)
 
-        vector_store.load()  # pick up any data written by other replicas first
+        vector_store = ctx["vector_store"]
+        vector_store.load()
         vector_store.add_chunks(embedded_chunks)
-
-        all_chunks = vector_store.get_all_chunks()
-        bm25_retriever.index(all_chunks)
-
         vector_store.save()
 
-        current_papers = get_current_papers()
+        ctx["bm25"].index(vector_store.get_all_chunks())
 
-        logger.info(f"Successfully processed: {file.filename}")
+        current_papers = get_current_papers(vector_store)
+
+        logger.info(f"[{user_id}] Successfully processed: {file.filename}")
 
         return {
             "message": f"Successfully uploaded and processed {file.filename}",
@@ -141,15 +173,18 @@ async def upload_paper(file: UploadFile = File(...)):
             "total_papers": len(current_papers)
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Upload error: {str(e)}")
+        logger.error(f"[{user_id}] Upload error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/ask")
-def ask_question(request: QuestionRequest):
-    papers = get_current_papers()
-    bm25_retriever.index(vector_store.get_all_chunks())
+def ask_question(request: QuestionRequest, x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+    papers = get_current_papers(ctx["vector_store"])
 
     if not papers:
         raise HTTPException(status_code=400, detail="Please upload at least one paper first")
@@ -157,91 +192,103 @@ def ask_question(request: QuestionRequest):
     try:
         result = answer_question(
             query=request.question,
-            vector_store=vector_store,
-            bm25_retriever=bm25_retriever,
+            vector_store=ctx["vector_store"],
+            bm25_retriever=ctx["bm25"],
             top_k=request.top_k,
             paper_filter=request.paper_filter
         )
         return result
-
     except Exception as e:
-        logger.error(f"QA error: {str(e)}")
+        logger.error(f"[{user_id}] QA error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/summarize")
-def summarize(request: SummarizeRequest):
-    papers = get_current_papers()
+def summarize(request: SummarizeRequest, x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+    papers = get_current_papers(ctx["vector_store"])
+
     if request.paper_name not in papers:
         raise HTTPException(status_code=404, detail=f"Paper not found: {request.paper_name}")
 
     try:
-        result = summarize_paper(request.paper_name, vector_store)
+        result = summarize_paper(request.paper_name, ctx["vector_store"])
         return result
-
     except Exception as e:
-        logger.error(f"Summarize error: {str(e)}")
+        logger.error(f"[{user_id}] Summarize error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/extract")
-def extract(request: ExtractRequest):
-    papers = get_current_papers()
+def extract(request: ExtractRequest, x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+    papers = get_current_papers(ctx["vector_store"])
+
     if request.paper_name not in papers:
         raise HTTPException(status_code=404, detail=f"Paper not found: {request.paper_name}")
 
     try:
         if request.extract_type == "methodology":
-            result = extract_methodology(request.paper_name, vector_store)
+            result = extract_methodology(request.paper_name, ctx["vector_store"])
         elif request.extract_type == "findings":
-            result = extract_findings(request.paper_name, vector_store)
+            result = extract_findings(request.paper_name, ctx["vector_store"])
         elif request.extract_type == "future_work":
-            result = extract_future_work(request.paper_name, vector_store)
+            result = extract_future_work(request.paper_name, ctx["vector_store"])
         else:
             raise HTTPException(
                 status_code=400,
                 detail="extract_type must be: methodology, findings, future_work"
             )
         return result
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Extract error: {str(e)}")
+        logger.error(f"[{user_id}] Extract error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/compare")
-def compare(request: CompareRequest):
-    papers = get_current_papers()
+def compare(request: CompareRequest, x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
+    papers = get_current_papers(ctx["vector_store"])
+
     for paper in request.paper_names:
         if paper not in papers:
             raise HTTPException(status_code=404, detail=f"Paper not found: {paper}")
 
     try:
-        result = compare_papers(request.paper_names, vector_store)
+        result = compare_papers(request.paper_names, ctx["vector_store"])
         return result
-
     except Exception as e:
-        logger.error(f"Compare error: {str(e)}")
+        logger.error(f"[{user_id}] Compare error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/gaps")
-def gaps(request: GapRequest):
-    try:
-        result = analyze_gaps(request.paper_names, vector_store)
-        return result
+def gaps(request: GapRequest, x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
 
+    try:
+        result = analyze_gaps(request.paper_names, ctx["vector_store"])
+        return result
     except Exception as e:
-        logger.error(f"Gap analysis error: {str(e)}")
+        logger.error(f"[{user_id}] Gap analysis error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/papers")
-def clear_papers():
-    vector_store.clear()
-    bm25_retriever.__init__()
+def clear_papers(x_user_id: Optional[str] = Header(None)):
+    user_id = safe_user_id(x_user_id)
+    ctx = get_user_context(user_id)
 
-    for f in UPLOAD_DIR.glob("*.pdf"):
+    ctx["vector_store"].clear()
+    ctx["bm25"].__init__()
+
+    for f in ctx["upload_dir"].glob("*.pdf"):
         f.unlink()
 
     return {"message": "All papers cleared successfully"}

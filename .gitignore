@@ -9,3 +9,4 @@ logs/
 *.pkl
 .DS_Store
 backend/evaluation/eval_results.json
+backend/data/users/

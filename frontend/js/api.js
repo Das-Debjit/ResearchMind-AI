@@ -1,3 +1,17 @@
+// Generate or retrieve a persistent anonymous user ID for this browser.
+// This is NOT authentication — it's a private-by-default identifier so each
+// visitor's uploaded papers stay separate from everyone else's.
+function getUserId() {
+    let userId = localStorage.getItem('researchmind_user_id');
+    if (!userId) {
+        userId = 'u_' + crypto.randomUUID();
+        localStorage.setItem('researchmind_user_id', userId);
+    }
+    return userId;
+}
+
+const USER_ID = getUserId();
+
 // api.js - All backend API calls
 
 const API_BASE = 'https://debjit-007-researchmind-ai-backend.hf.space';
@@ -40,20 +54,23 @@ async function apiRequest(endpoint, method = 'GET', body = null, isFile = false)
     try {
         const options = {
             method,
-            headers: isFile ? {} : { 'Content-Type': 'application/json' }
+            headers: isFile ? { 'X-User-Id': USER_ID } : {
+                'Content-Type': 'application/json',
+                'X-User-Id': USER_ID
+            }
         };
-        
+
         if (body) {
             options.body = isFile ? body : JSON.stringify(body);
         }
-        
+
         const response = await fetch(`${API_BASE}${endpoint}`, options);
         const data = await response.json();
-        
+
         if (!response.ok) {
             throw new Error(data.detail || 'Request failed');
         }
-        
+
         return data;
     } catch (error) {
         console.error(`API Error [${endpoint}]:`, error);
