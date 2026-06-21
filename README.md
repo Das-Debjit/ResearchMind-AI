@@ -142,7 +142,16 @@ ResearchMind-AI/
 
 ---
 
-## Author
+## Known limitations
+
+This is a portfolio-grade deployment, not a production system, and a few tradeoffs are intentional rather than accidental:
+
+- **Storage is local disk, not a database.** Each user's papers and FAISS index live on the container's filesystem at `backend/data/users/<user_id>/`, scoped by an anonymous, persistent `X-User-Id` generated client-side. There's no database, no backup, and no redundancy.
+- **Storage is not guaranteed durable across restarts or multiple replicas.** If the hosting platform restarts the container, redeploys it, or runs multiple replicas behind a load balancer, data written to one replica's disk isn't visible to another. A production version would move the vector index to a managed vector database (e.g. Qdrant, Pinecone, pgvector) and uploaded files to object storage (e.g. S3), decoupling storage from compute entirely.
+- **User identity is anonymous and per-browser, not authenticated.** Privacy between users is enforced by a random ID stored in `localStorage`, not a login system. Clearing browser storage resets a user's history; the same person in two different browsers is treated as two different users.
+- **The cross-encoder reranker is disabled in the public deployment** (`ENABLE_RERANKER=false`) to stay within the free-tier memory budget. Hybrid retrieval (dense + BM25 + RRF) still runs in full; only the optional reranking pass is skipped.
+
+---
 
 **Debjit Das**
 [GitHub](https://github.com/Das-Debjit) · [LinkedIn](https://linkedin.com/in/debjitdas82) · [Portfolio](https://debjit-das-portfolio.vercel.app/)
